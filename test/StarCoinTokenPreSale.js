@@ -1,18 +1,18 @@
 const StarCoin = artifacts.require("StarCoin");
 const StarCoinPreSale = artifacts.require("StarCoinPreSale");
+const InvestorWhiteList = artifacts.require("InvestorWhiteList");
 
 const assertJump = function(error) {
   assert.isAbove(error.message.search('VM Exception while processing transaction: revert'), -1, 'Invalid opcode error must be returned');
 };
 
-const hardCap = 12916; //in ETH
-const softCap = 0; //in ETH, i.e no soft cap
-const limit = 4000; //in ETH, i.e one third
-const beneficiary = web3.eth.accounts[0];
+const hardCap = 20000000; //in STAR
+const softCap =  16000000; //in STAR
+const beneficiary = web3.eth.accounts[9];
 
 function advanceToBlock(number) {
   if (web3.eth.blockNumber > number) {
-    throw Error(`block number ${number} is in the past (current is ${web3.eth.blockNumber})`)
+    throw Error(`block number ${number} is in thfe past (current is ${web3.eth.blockNumber})`)
   }
 
   while (web3.eth.blockNumber < number) {
@@ -20,21 +20,21 @@ function advanceToBlock(number) {
   }
 }
 
-contract('StarCoinPresale', function (accounts) {
+contract('StarCoinPreSale', function (accounts) {
   beforeEach(async function () {
     this.startBlock = web3.eth.blockNumber;
-    this.endBlock = web3.eth.blockNumber + 15;
+    this.endBlock = this.startBlock + 20;
 
     this.token = await StarCoin.new();
-    const totalTokens = 6328760; //NOT in wei, converted by contract
+    this.whiteList = await InvestorWhiteList.new();
 
-    this.crowdsale = await StarCoinPreSale.new(hardCap, softCap, this.token.address, beneficiary, totalTokens, limit, this.startBlock, this.endBlock);
+    this.crowdsale = await StarCoinPreSale.new(hardCap, softCap, this.token.address, beneficiary, this.whiteList.address, this.startBlock, this.endBlock);
     this.token.setTransferAgent(this.token.address, true);
     this.token.setTransferAgent(this.crowdsale.address, true);
     this.token.setTransferAgent(accounts[0], true);
 
-    //transfer more than totalTokens to test hardcap reach properly
-    this.token.transfer(this.crowdsale.address, web3.toWei(5000, "ether"));
+    //transfer more than hardcap to test hardcap reach properly
+    this.token.transfer(this.crowdsale.address, web3.toWei(1200000000, "ether"));
   });
 
   it('should allow to halt by owner', async function () {
@@ -94,30 +94,341 @@ contract('StarCoinPresale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should send tokens to purchaser', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
-
-    const balance = await this.token.balanceOf(accounts[2]);
-    assert.equal(balance.valueOf(), 1000 * 10 ** 18);
-
-    const crowdsaleBalance = await this.token.balanceOf(this.crowdsale.address);
-    assert.equal(crowdsaleBalance.valueOf(), 4000 * 10 ** 18);
-
-    const collected = await this.crowdsale.collected();
-    assert.equal(collected.valueOf(), 1 * 10 ** 18);
-
-    const investorCount = await this.crowdsale.investorCount();
-    assert.equal(investorCount, 1);
-
-    const tokensSold = await this.crowdsale.tokensSold();
-    assert.equal(tokensSold.valueOf(), 1000 * 10 ** 18);
+  it('should not allow to set new whitelist with zero value', async function () {
+    try {
+      await this.crowdsale.setNewWhiteList(0x0);
+    } catch (error) {
+      return assertJump(error);
+    }
+    assert.fail('should have thrown before');
   });
 
-  it('should not allow purchase when pre sale is halted', async function () {
+  it('should not allow to set new whitelist by not owner', async function () {
+    try {
+      await this.crowdsale.setNewWhiteList(0x0, { from: accounts[1] });
+    } catch (error) {
+      return assertJump(error);
+    }
+    assert.fail('should have thrown before');
+  });
+
+  it('should set new whitelist', async function () {
+    const newWhiteList = await InvestorWhiteList.new();
+    await this.crowdsale.setNewWhiteList(newWhiteList.address);
+
+    const actual = await this.crowdsale.investorWhiteList();
+    assert.equal(newWhiteList.address, actual);
+  });
+
+  it('should not allow to transfer ownership if ICO is active', async function () {
+    try {
+      await this.crowdsale.transferOwnership(accounts[1]);
+    } catch (error) {
+      return assertJump(error);
+    }
+    assert.fail('should have thrown before');
+  });
+
+  it('should allow to transfer ownership when ICO is ended', async function () {
+    advanceToBlock(this.endBlock);
+
+    await this.crowdsale.transferOwnership(accounts[1]);
+    const actual = await this.crowdsale.owner();
+    assert.equal(accounts[1], actual);
+  });
+
+  it('should increase deposit accordingly with several investments', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addInvestorToWhiteList(accounts[3]);
+    await this.whiteList.addReferralOf(accounts[3], accounts[4]);
+
+    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+
+    const deposited1 = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited1.toNumber(), 1 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({value: 500 * 10 ** 18, from: accounts[2]});
+
+    const deposited2 = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited2.toNumber(), 501 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({value: 500 * 10 ** 18, from: accounts[3]});
+
+    const deposited3 = await this.crowdsale.deposited(accounts[3]);
+    assert.equal(deposited3.toNumber(), 500 * 10 ** 18);
+
+    //should not increase deposit of referral
+    const deposited4 = await this.crowdsale.deposited(accounts[4]);
+    assert.equal(deposited4.toNumber(), 0);
+  });
+
+  it('should not add bonus and send any tokens to referral for less than 100 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.crowdsale.sendTransaction({
+      value: 99 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 19800 * 10 ** 18);
+
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 0);
+  });
+
+  it('should not add referral bonus to tokensSold if no referral of investor', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
+    await this.crowdsale.sendTransaction({
+      value: 100 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 21000 * 10 ** 18);
+
+    //check that sender deposit was increased
+    const deposited = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited.toNumber(), 100 * 10 ** 18);
+
+    //check that tokensSold is correct
+    const tokensSold = await this.crowdsale.tokensSold();
+    assert.equal(tokensSold.toNumber(), 21000 * 10 ** 18);
+  });
+
+  it('should add 5% bonus and send 3% referral bonus for 100-249 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 100 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 21000 * 10 ** 18);
+
+    //check that sender deposit was increased
+    const deposited = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited.toNumber(), 100 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 600 * 10 ** 18);
+
+    //check that tokensSold is correct
+    const tokensSold1 = await this.crowdsale.tokensSold();
+    assert.equal(tokensSold1.toNumber(), 21600 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 249 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 52290 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 1494 * 10 ** 18);
+
+    //check that tokensSold is correct
+    const tokensSold2 = await this.crowdsale.tokensSold();
+    assert.equal(tokensSold2.toNumber(), 75384 * 10 ** 18);
+  });
+
+  it('should add 7% bonus and send 4% referral bonus for 250-499 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 250 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 53500 * 10 ** 18);
+
+    //check that sender deposit was increased
+    const deposited = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited.toNumber(), 250 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 2000 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 499 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 106786 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 3992 * 10 ** 18);
+  });
+
+  it('should add 10% bonus and send 5% referral bonus for 500-999 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 500 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 110000 * 10 ** 18);
+
+    //check that sender deposit was increased
+    const deposited = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited.toNumber(), 500 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 5000 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 999 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 219780 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 9990 * 10 ** 18);
+  });
+
+  it('should add 12.5% bonus send 5,5% referral bonus for 1000-1999 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 1000 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 225000 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 11000 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 1999 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 449775 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 21989 * 10 ** 18);
+  });
+
+  it('should add 15% bonus and send 6% referral bonus for 2000-4999 ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 2000 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 460000 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 24000 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 4999 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 1149770 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 59988 * 10 ** 18);
+  });
+
+  it('should add 20% bonus send 7% referral bonus for 5000 and more ETH investment', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addReferralOf(accounts[2], accounts[3]);
+
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+    await this.whiteList.addReferralOf(accounts[4], accounts[5]);
+
+    await this.crowdsale.sendTransaction({
+      value: 5000 * 10 ** 18,
+      from: accounts[2],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf2 = await this.token.balanceOf(accounts[2]);
+    assert.equal(balanceOf2.valueOf(), 1200000 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf3 = await this.token.balanceOf(accounts[3]);
+    assert.equal(balanceOf3.valueOf(), 70000 * 10 ** 18);
+
+    await this.crowdsale.sendTransaction({
+      value: 10000 * 10 ** 18,
+      from: accounts[4],
+    });
+
+    //check that investor received proper tokens count
+    const balanceOf4 = await this.token.balanceOf(accounts[4]);
+    assert.equal(balanceOf4.valueOf(), 2400000 * 10 ** 18);
+
+    //check that correct referral bonus is received
+    const balanceOf5 = await this.token.balanceOf(accounts[5]);
+    assert.equal(balanceOf5.valueOf(), 140000 * 10 ** 18);
+  });
+
+  it('should not allow purchase when ICO is halted', async function () {
     await this.crowdsale.halt();
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
 
     try {
-      await this.crowdsale.sendTransaction({value: 0.11 * 10 ** 18, from: accounts[2]});
+      await this.crowdsale.sendTransaction({value: 100 * 10 ** 18, from: accounts[2]});
     } catch (error) {
       return assertJump(error);
     }
@@ -125,6 +436,8 @@ contract('StarCoinPresale', function (accounts) {
   });
 
   it('should not allow to send less than 0.5 ETH', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
     try {
       await this.crowdsale.sendTransaction({value: 0.04999 * 10 ** 18, from: accounts[2]});
     } catch (error) {
@@ -133,56 +446,37 @@ contract('StarCoinPresale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should not allow to exceed purchase limit with 1 purchase', async function () {
-    const amount = ((limit / ethUsdPrice) + 1) * 10 ** 18;
-
-    try {
-      await this.crowdsale.sendTransaction({value: amount, from: accounts[2]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
-  it('should not allow to exceed purchase limit with 2 purchases', async function () {
-    await this.crowdsale.sendTransaction({value: 0.9 * 10 ** 18, from: accounts[2]});
-
-    try {
-      await this.crowdsale.sendTransaction({value: 0.11 * 10 ** 18, from: accounts[2]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
   it('should set flag when softcap is reached', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+
+    //ICO softcap (2637) will be reached with single 2294 ETH investment due to high volume bonus of 15%
+    await this.crowdsale.sendTransaction({value: 2294 * 10 ** 18, from: accounts[1]});
 
     const softCapReached = await this.crowdsale.softCapReached();
     assert.equal(softCapReached, true);
   });
 
-  it('should not allow purchase after withdraw', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+  it('should set flag when softcap is reached - referral purchase', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+    await this.whiteList.addReferralOf(accounts[1], accounts[2]);
 
-    await this.crowdsale.withdraw();
+    //ICO softcap will be reached with single 2198 ETH investment due to high volume (15%) and referral bonus (6%)
+    await this.crowdsale.sendTransaction({value: 2198 * 10 ** 18, from: accounts[1]});
 
-    try {
-      await this.crowdsale.sendTransaction({value: 0.11 * 10 ** 18, from: accounts[3]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
+    const softCapReached = await this.crowdsale.softCapReached();
+    assert.equal(softCapReached, true);
   });
 
   it('should not allow to exceed hard cap', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+    await this.whiteList.addInvestorToWhiteList(accounts[4]);
+
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
 
     try {
-      await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[4]});
+      await this.crowdsale.sendTransaction({value: 133000 * 10 ** 18, from: accounts[4]});
     } catch (error) {
       return assertJump(error);
     }
@@ -190,8 +484,9 @@ contract('StarCoinPresale', function (accounts) {
   });
 
   it('should allow withdraw only for owner', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+
+    await this.crowdsale.sendTransaction({value: 20000 * 10 ** 18, from: accounts[1]});
 
     try {
       await this.crowdsale.withdraw({from: accounts[1]});
@@ -202,6 +497,8 @@ contract('StarCoinPresale', function (accounts) {
   });
 
   it('should not allow withdraw when softcap is not reached', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
 
     try {
@@ -213,37 +510,57 @@ contract('StarCoinPresale', function (accounts) {
   });
 
   it('should withdraw - send all not distributed tokens and collected ETH to beneficiary', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
+    await this.crowdsale.sendTransaction({value: 12000 * 10 ** 18, from: accounts[1]});
+    await this.crowdsale.sendTransaction({value: 500 * 10 ** 18, from: accounts[2]});
 
     const oldBenBalanceEth = web3.eth.getBalance(beneficiary);
-    const oldBenBalanceStar = await this.token.balanceOf(beneficiary).valueOf();
+    const oldIcoContractBalanceStar = await this.token.balanceOf(this.crowdsale.address).valueOf();
 
     await this.crowdsale.withdraw();
 
     const newBenBalanceEth = web3.eth.getBalance(beneficiary);
     const newBenBalanceStar = await this.token.balanceOf(beneficiary).valueOf();
-    const preSaleContractBalanceStar = await this.token.balanceOf(this.crowdsale.address).valueOf();
-    const preSaleContractBalanceEth = web3.eth.getBalance(this.crowdsale.address);
+    const icoContractBalanceStar = await this.token.balanceOf(this.crowdsale.address).valueOf();
+    const icoContractBalanceEth = web3.eth.getBalance(this.crowdsale.address);
 
-    assert.equal(newBenBalanceEth > oldBenBalanceEth, true);
-    assert.equal(newBenBalanceStar > oldBenBalanceStar, true);
-    assert.equal(preSaleContractBalanceStar, 0);
-    assert.equal(preSaleContractBalanceEth, 0);
+    assert.equal(icoContractBalanceStar, 0);
+    assert.equal(icoContractBalanceEth, 0);
+    assert.equal(newBenBalanceEth.minus(oldBenBalanceEth).toNumber(), web3.toWei(12500));
+    assert.equal(newBenBalanceStar.toNumber(), oldIcoContractBalanceStar.toNumber());
   });
 
-  it('should not allow purchase if pre sale is ended', async function () {
+  it('should not allow purchase if ICO is ended', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
     advanceToBlock(this.endBlock);
 
     try {
-      await this.crowdsale.sendTransaction({value: 0.1 * 10 ** 18, from: accounts[2]});
+      await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
     } catch (error) {
       return assertJump(error);
     }
     assert.fail('should have thrown before');
   });
 
-  it('should not allow refund if pre sale is not ended', async function () {
+  it('should not allow purchase after withdraw', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
+    await this.crowdsale.sendTransaction({value: 12500 * 10 ** 18, from: accounts[2]});
+    await this.crowdsale.withdraw();
+
+    try {
+      await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
+    } catch (error) {
+      return assertJump(error);
+    }
+    assert.fail('should have thrown before');
+  });
+
+  it('should not allow refund if ICO is not ended', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
 
     try {
@@ -254,9 +571,12 @@ contract('StarCoinPresale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should not allow refund if cap is reached', async function () {
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
-    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[3]});
+  it('should not allow refund if soft cap is reached', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+    await this.whiteList.addInvestorToWhiteList(accounts[3]);
+
+    await this.crowdsale.sendTransaction({value: 12000 * 10 ** 18, from: accounts[1]});
+    await this.crowdsale.sendTransaction({value: 500 * 10 ** 18, from: accounts[3]});
 
     advanceToBlock(this.endBlock);
 
@@ -268,23 +588,27 @@ contract('StarCoinPresale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should not allow refund if pre sale is halted', async function () {
+  it('should allow refund if ICO is halted', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[1]);
+
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
 
     advanceToBlock(this.endBlock);
-
     await this.crowdsale.halt();
 
-    try {
-      await this.crowdsale.refund({from: accounts[1]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
+    const balanceBefore = web3.eth.getBalance(accounts[1]);
+
+    await this.crowdsale.refund({from: accounts[1]});
+
+    const balanceAfter = web3.eth.getBalance(accounts[1]);
+
+    assert.equal(balanceAfter > balanceBefore, true);
   });
 
-  it('should refund if cap is not reached and pre sale is ended', async function () {
-    await this.crowdsale.sendTransaction({value: 0.1 * 10 ** 18, from: accounts[2]});
+  it('should refund if cap is not reached and ICO is ended', async function () {
+    await this.whiteList.addInvestorToWhiteList(accounts[2]);
+
+    await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[2]});
 
     advanceToBlock(this.endBlock);
 
@@ -296,8 +620,10 @@ contract('StarCoinPresale', function (accounts) {
     assert.equal(balanceAfter > balanceBefore, true);
 
     const weiRefunded = await this.crowdsale.weiRefunded();
-    assert.equal(weiRefunded, 0.1 * 10 ** 18);
+    assert.equal(weiRefunded, 1 * 10 ** 18);
 
+    const deposited = await this.crowdsale.deposited(accounts[2]);
+    assert.equal(deposited.toNumber(), 0);
     //should not refund 1 more time
     try {
       await this.crowdsale.refund({from: accounts[2]});

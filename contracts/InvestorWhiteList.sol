@@ -1,4 +1,5 @@
-pragma solidity ^0.4.0;
+pragma solidity ^0.4.11;
+
 import "zeppelin-solidity/contracts/ownership/Ownable.sol";
 
 contract InvestorWhiteList is Ownable {
