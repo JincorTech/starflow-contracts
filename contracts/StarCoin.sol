@@ -13,7 +13,7 @@ contract StarCoin is Burnable, Ownable {
   string public constant name = "StarCoin";
   string public constant symbol = "STAR";
   uint8 public constant decimals = 18;
-  uint public constant INITIAL_SUPPLY = 100000000 * 1 ether;
+  uint public constant INITIAL_SUPPLY = 40000000 * 1 ether; //40M tokens accroding to https://starflow.com/ico/
 
   /* The finalizer contract that allows unlift the transfer limits on this token */
   address public releaseAgent;
@@ -50,7 +50,7 @@ contract StarCoin is Burnable, Ownable {
    * @dev Constructor that gives msg.sender all of existing tokens.
    */
   function StarCoin() {
-    totalSupply = INITIAL_SUPPLY;
+    totalSupply_ = INITIAL_SUPPLY;
     balances[msg.sender] = INITIAL_SUPPLY;
   }
 
