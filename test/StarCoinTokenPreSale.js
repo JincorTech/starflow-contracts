@@ -6,13 +6,14 @@ const assertJump = function(error) {
   assert.isAbove(error.message.search('VM Exception while processing transaction: revert'), -1, 'Invalid opcode error must be returned');
 };
 
-const hardCap = 20000000; //in STAR
-const softCap =  16000000; //in STAR
+const hardCap = 26600000; //in STAR
+const softCap = 2500000; //in STAR
 const beneficiary = web3.eth.accounts[9];
+const starPerEth = 200; //in STAR
 
 function advanceToBlock(number) {
   if (web3.eth.blockNumber > number) {
-    throw Error(`block number ${number} is in thfe past (current is ${web3.eth.blockNumber})`)
+    throw Error(`block number ${number} is in the past (current is ${web3.eth.blockNumber})`)
   }
 
   while (web3.eth.blockNumber < number) {
@@ -28,66 +29,67 @@ contract('StarCoinPreSale', function (accounts) {
     this.token = await StarCoin.new();
     this.whiteList = await InvestorWhiteList.new();
 
-    this.crowdsale = await StarCoinPreSale.new(hardCap, softCap, this.token.address, beneficiary, this.whiteList.address, this.startBlock, this.endBlock);
+    this.crowdsale = await StarCoinPreSale.new(hardCap, softCap, this.token.address, beneficiary, this.whiteList.address, starPerEth, this.startBlock, this.endBlock);
     this.token.setTransferAgent(this.token.address, true);
     this.token.setTransferAgent(this.crowdsale.address, true);
     this.token.setTransferAgent(accounts[0], true);
 
+
     //transfer more than hardcap to test hardcap reach properly
-    this.token.transfer(this.crowdsale.address, web3.toWei(1200000000, "ether"));
+    this.token.transfer(this.crowdsale.address, web3.toWei(30000000, "ether"));
   });
 
-  it('should allow to halt by owner', async function () {
-    await this.crowdsale.halt();
+  it('should allow to pause by owner', async function () {
+    await this.crowdsale.pause();
 
-    const halted = await this.crowdsale.halted();
+    const paused = await this.crowdsale.paused();
 
-    assert.equal(halted, true);
+    assert.equal(paused, true);
   });
 
-  it('should not allow to halt by not owner', async function () {
+  it('should not allow to pause by not owner', async function () {
     try {
-      await this.crowdsale.halt({from: accounts[2]});
+      await this.crowdsale.pause({from: accounts[2]});
     } catch (error) {
       return assertJump(error);
     }
     assert.fail('should have thrown before');
   });
 
-  it('should not allow to halt if already halted', async function () {
-    await this.crowdsale.halt();
+  it('should not allow to pause if already paused', async function () {
+    await this.crowdsale.pause();
 
     try {
-      await this.crowdsale.halt();
+      await this.crowdsale.pause();
     } catch (error) {
       return assertJump(error);
     }
     assert.fail('should have thrown before');
   });
 
-  it('should allow to unhalt by owner', async function () {
-    await this.crowdsale.halt();
+  it('should allow to unpause by owner', async function () {
+    await this.crowdsale.pause();
 
-    await this.crowdsale.unhalt();
-    const halted = await this.crowdsale.halted();
+    await this.crowdsale.unpause();
+    const paused = await this.crowdsale.paused();
 
-    assert.equal(halted, false);
+    assert.equal(paused, false);
   });
 
-  it('should not allow to unhalt when not halted', async function () {
+  it('should not allow to unpause when not paused', async function () {
     try {
-      await this.crowdsale.unhalt();
+      await this.crowdsale.unpause();
     } catch (error) {
       return assertJump(error);
     }
     assert.fail('should have thrown before');
   });
 
-  it('should not allow to unhalt by not owner', async function () {
-    await this.crowdsale.halt();
+  it('should not allow to unpause by not owner', async function () {
+    await this.crowdsale.pause();
 
     try {
-      await this.crowdsale.unhalt({from: accounts[2]});
+      await this.crowdsale.unpause({from: accounts[2]});
     } catch (error) {
       return assertJump(error);
     }
@@ -423,8 +425,8 @@ contract('StarCoinPreSale', function (accounts) {
     assert.equal(balanceOf5.valueOf(), 140000 * 10 ** 18);
   });
 
-  it('should not allow purchase when ICO is halted', async function () {
-    await this.crowdsale.halt();
+  it('should not allow purchase when ICO is paused', async function () {
+    await this.crowdsale.pause();
     await this.whiteList.addInvestorToWhiteList(accounts[2]);
 
     try {
@@ -435,11 +437,11 @@ contract('StarCoinPreSale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should not allow to send less than 0.5 ETH', async function () {
+  it('should not allow to send less than 0.1 ETH', async function () {
     await this.whiteList.addInvestorToWhiteList(accounts[2]);
 
     try {
-      await this.crowdsale.sendTransaction({value: 0.04999 * 10 ** 18, from: accounts[2]});
+      await this.crowdsale.sendTransaction({value: 0.0999 * 10 ** 18, from: accounts[2]});
     } catch (error) {
       return assertJump(error);
     }
@@ -449,8 +451,8 @@ contract('StarCoinPreSale', function (accounts) {
   it('should set flag when softcap is reached', async function () {
     await this.whiteList.addInvestorToWhiteList(accounts[1]);
 
-    //ICO softcap (2637) will be reached with single 2294 ETH investment due to high volume bonus of 15%
-    await this.crowdsale.sendTransaction({value: 2294 * 10 ** 18, from: accounts[1]});
+    //ICO softcap will be reached with single 10417 ETH investment due to high volume bonus
+    await this.crowdsale.sendTransaction({value: 10417 * 10 ** 18, from: accounts[1]});
 
     const softCapReached = await this.crowdsale.softCapReached();
     assert.equal(softCapReached, true);
@@ -460,8 +462,8 @@ contract('StarCoinPreSale', function (accounts) {
     await this.whiteList.addInvestorToWhiteList(accounts[1]);
     await this.whiteList.addReferralOf(accounts[1], accounts[2]);
 
-    //ICO softcap will be reached with single 2198 ETH investment due to high volume (15%) and referral bonus (6%)
-    await this.crowdsale.sendTransaction({value: 2198 * 10 ** 18, from: accounts[1]});
+    //ICO softcap will be reached with single 9843 ETH investment due to high volume and referral bonus
+    await this.crowdsale.sendTransaction({value: 9843 * 10 ** 18, from: accounts[1]});
 
     const softCapReached = await this.crowdsale.softCapReached();
     assert.equal(softCapReached, true);
@@ -517,19 +519,19 @@ contract('StarCoinPreSale', function (accounts) {
     await this.crowdsale.sendTransaction({value: 500 * 10 ** 18, from: accounts[2]});
 
     const oldBenBalanceEth = web3.eth.getBalance(beneficiary);
-    const oldIcoContractBalanceStar = await this.token.balanceOf(this.crowdsale.address).valueOf();
+    const oldIcoContractBalanceJcr = await this.token.balanceOf(this.crowdsale.address).valueOf();
 
     await this.crowdsale.withdraw();
 
     const newBenBalanceEth = web3.eth.getBalance(beneficiary);
-    const newBenBalanceStar = await this.token.balanceOf(beneficiary).valueOf();
-    const icoContractBalanceStar = await this.token.balanceOf(this.crowdsale.address).valueOf();
+    const newBenBalanceJcr = await this.token.balanceOf(beneficiary).valueOf();
+    const icoContractBalanceJcr = await this.token.balanceOf(this.crowdsale.address).valueOf();
     const icoContractBalanceEth = web3.eth.getBalance(this.crowdsale.address);
 
-    assert.equal(icoContractBalanceStar, 0);
+    assert.equal(icoContractBalanceJcr, 0);
     assert.equal(icoContractBalanceEth, 0);
     assert.equal(newBenBalanceEth.minus(oldBenBalanceEth).toNumber(), web3.toWei(12500));
-    assert.equal(newBenBalanceStar.toNumber(), oldIcoContractBalanceStar.toNumber());
+    assert.equal(newBenBalanceJcr.toNumber(), oldIcoContractBalanceJcr.toNumber());
   });
 
   it('should not allow purchase if ICO is ended', async function () {
@@ -588,13 +590,13 @@ contract('StarCoinPreSale', function (accounts) {
     assert.fail('should have thrown before');
   });
 
-  it('should allow refund if ICO is halted', async function () {
+  it('should allow refund if ICO is paused', async function () {
     await this.whiteList.addInvestorToWhiteList(accounts[1]);
 
     await this.crowdsale.sendTransaction({value: 1 * 10 ** 18, from: accounts[1]});
 
     advanceToBlock(this.endBlock);
-    await this.crowdsale.halt();
+    await this.crowdsale.pause();
 
     const balanceBefore = web3.eth.getBalance(accounts[1]);
 

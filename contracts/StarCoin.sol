@@ -47,7 +47,7 @@ contract StarCoin is MintableToken {
 
   /** Restrict minting by the MAXIMUM_SUPPLY allowed **/
   modifier bellowMaximumSupply(uint _amount) {
-    require(_amount + totalSupply_ <= MAXIMUM_SUPPLY);
+    require(_amount + totalSupply_ < MAXIMUM_SUPPLY);
     _;
   }
 

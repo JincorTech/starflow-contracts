@@ -1,21 +1,23 @@
 pragma solidity ^0.4.11;
 
-import "./Haltable.sol";
+import "zeppelin-solidity/contracts/lifecycle/Pausable.sol";
 import "zeppelin-solidity/contracts/math/SafeMath.sol";
 import "zeppelin-solidity/contracts/ownership/Ownable.sol";
 import "./StarCoin.sol";
 import "./InvestorWhiteList.sol";
 
-contract StarCoinPreSale is Haltable {
+contract StarCoinPreSale is Pausable {
   using SafeMath for uint;
 
-  string public constant name = "StarCoin ICO";
+  string public constant name = "StarCoin Token ICO";
 
   StarCoin public token;
 
   address public beneficiary;
 
   InvestorWhiteList public investorWhiteList;
+
+  uint public starEthRate;
 
   uint public hardCap;
 
@@ -36,8 +38,6 @@ contract StarCoinPreSale is Haltable {
   bool public crowdsaleFinished = false;
 
   mapping (address => uint) public deposited;
-
-  // This is where the thresholds for referral bonuses are defined
 
   uint constant VOLUME_20_REF_7 = 5000 ether;
 
@@ -70,7 +70,7 @@ contract StarCoinPreSale is Haltable {
   }
 
   modifier minInvestment() {
-    require(msg.value >= 0.5 * 1 ether);
+    require(msg.value >= 0.1 * 1 ether);
     _;
   }
 
@@ -85,6 +85,8 @@ contract StarCoinPreSale is Haltable {
     address _token,
     address _beneficiary,
     address _investorWhiteList,
+    uint _baseStarEthPrice,
+
     uint _startBlock,
     uint _endBlock
   ) {
@@ -98,6 +100,7 @@ contract StarCoinPreSale is Haltable {
     startBlock = _startBlock;
     endBlock = _endBlock;
 
+    starEthRate = _baseStarEthPrice;
   }
 
   function() payable minInvestment inWhiteList {
@@ -125,27 +128,26 @@ contract StarCoinPreSale is Haltable {
   }
 
   function calculateBonus(uint tokens) internal constant returns (uint bonus) {
-    // 20 %
     if (msg.value >= VOLUME_20_REF_7) {
       return tokens.mul(20).div(100);
     }
-    // 15 %
+
     if (msg.value >= VOLUME_15_REF_6) {
       return tokens.mul(15).div(100);
     }
-    // 12.5 %
+
     if (msg.value >= VOLUME_12d5_REF_5d5) {
       return tokens.mul(125).div(1000);
     }
-    // 10 %
+
     if (msg.value >= VOLUME_10_REF_5) {
       return tokens.mul(10).div(100);
     }
-    // 7 %
+
     if (msg.value >= VOLUME_7_REF_4) {
       return tokens.mul(7).div(100);
     }
-    // 5 %
+
     if (msg.value >= VOLUME_5_REF_3) {
       return tokens.mul(5).div(100);
     }
@@ -186,11 +188,11 @@ contract StarCoinPreSale is Haltable {
     investorWhiteList = InvestorWhiteList(newWhiteList);
   }
 
-  function doPurchase() private icoActive inNormalState {
+  function doPurchase() private icoActive whenNotPaused {
     require(!crowdsaleFinished);
 
-    uint tokens = msg.value;
-    uint referralBonus = calculateReferralBonus(tokens); // It is based on the number of STAR not ETH!! => Some of the tests are incorrect
+    uint tokens = msg.value.mul(starEthRate);
+    uint referralBonus = calculateReferralBonus(tokens);
     address referral = investorWhiteList.getReferralOf(msg.sender);
 
     tokens = tokens.add(calculateBonus(tokens));

@@ -1,6 +1,6 @@
 const ReferralWhiteList = artifacts.require("InvestorWhiteList");
 
-const errorMessage = 'VM Exception while processing transaction: revert';
+const errorMessage = 'VM Exception while processing transaction:';
 
 const should = require('chai')
   .use(require('chai-as-promised'))

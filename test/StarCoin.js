@@ -4,13 +4,13 @@ const assertJump = function(error) {
 };
 
 contract('StarCoin', function(accounts) {
-  it("should put 100000000 STAR to supply and in the first account", async function () {
+  it("should put 40000000 STAR to supply and in the first account", async function () {
     const instance = await StarCoin.new();
     const balance = await instance.balanceOf(accounts[0]);
     const supply = await instance.totalSupply();
 
-    assert.equal(balance.valueOf(), 100000000 * 10 ** 18, "First account (owner) balance must be 100000000");
-    assert.equal(supply.valueOf(), 100000000 * 10 ** 18, "Supply must be 100000000");
+    assert.equal(balance.valueOf(), 40000000 * 10 ** 18, "First account (owner) balance must be 100000000");
+    assert.equal(supply.valueOf(), 40000000 * 10 ** 18, "Supply must be 100000000");
   });
 
   it("should not allow to set releaseAgent by not owner", async function () {
@@ -125,7 +125,7 @@ contract('StarCoin', function(accounts) {
     await token.transfer(accounts[1], 100 * 10 ** 18);
 
     const balance0 = await token.balanceOf(accounts[0]);
-    assert.equal(balance0.valueOf(), 99999900 * 10 ** 18);
+    assert.equal(balance0.valueOf(), 39999900 * 10 ** 18);
 
     const balance1 = await token.balanceOf(accounts[1]);
     assert.equal(balance1.valueOf(), 100 * 10 ** 18);
@@ -139,7 +139,7 @@ contract('StarCoin', function(accounts) {
     await token.transfer(accounts[1], 0.0001 * 10 ** 18);
 
     const balance0 = await token.balanceOf(accounts[0]);
-    assert.equal(balance0.valueOf(), 99999999.9999 * 10 ** 18);
+    assert.equal(balance0.valueOf(), 39999999.9999 * 10 ** 18);
 
     const balance1 = await token.balanceOf(accounts[1]);
     assert.equal(balance1.valueOf(), 0.0001 * 10 ** 18);
@@ -153,7 +153,7 @@ contract('StarCoin', function(accounts) {
     await token.transfer(accounts[1], 100 * 10 ** 18);
 
     const balance0 = await token.balanceOf(accounts[0]);
-    assert.equal(balance0.valueOf(), 99999900 * 10 ** 18);
+    assert.equal(balance0.valueOf(), 39999900 * 10 ** 18);
 
     const balance1 = await token.balanceOf(accounts[1]);
     assert.equal(balance1.valueOf(), 100 * 10 ** 18);
@@ -207,7 +207,7 @@ contract('StarCoin', function(accounts) {
     await token.transferFrom(accounts[0], accounts[2], 100 * 10 ** 18, {from: accounts[1]});
 
     const balance0 = await token.balanceOf(accounts[0]);
-    assert.equal(balance0.valueOf(), 99999900 * 10 ** 18);
+    assert.equal(balance0.valueOf(), 39999900 * 10 ** 18);
 
     const balance1 = await token.balanceOf(accounts[2]);
     assert.equal(balance1.valueOf(), 100 * 10 ** 18);
@@ -224,97 +224,12 @@ contract('StarCoin', function(accounts) {
     await token.transferFrom(accounts[0], accounts[2], 100 * 10 ** 18, {from: accounts[1]});
 
     const balance0 = await token.balanceOf(accounts[0]);
-    assert.equal(balance0.valueOf(), 99999900 * 10 ** 18);
+    assert.equal(balance0.valueOf(), 39999900 * 10 ** 18);
 
     const balance1 = await token.balanceOf(accounts[2]);
     assert.equal(balance1.valueOf(), 100 * 10 ** 18);
 
     const balance2 = await token.balanceOf(accounts[1]);
     assert.equal(balance2.valueOf(), 0);
-  });
-
-  it("should allow to burn by owner", async function() {
-    let token = await StarCoin.new();
-    await token.burn(1000000 * 10 ** 18);
-
-    const balance = await token.balanceOf(accounts[0]).valueOf();
-    assert.equal(balance, 99000000 * 10 ** 18);
-
-    const supply = await token.totalSupply().valueOf();
-    assert.equal(supply, 99000000 * 10 ** 18);
-  });
-
-  it("should not allow to burn by not owner", async function() {
-    let token = await StarCoin.new();
-    await token.setTransferAgent(accounts[0], true);
-    await token.transfer(accounts[1], 1000000 * 10 ** 18);
-
-    try {
-      await token.burn(1000000 * 10 ** 18, {from: accounts[1]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
-  it("should not allow to burn more than balance", async function() {
-    let token = await StarCoin.new();
-
-    try {
-      await token.burn(100000001 * 10 ** 18);
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
-  it("should allow to burn from by owner", async function() {
-    let token = await StarCoin.new();
-    await token.setTransferAgent(accounts[0], true);
-    await token.transfer(accounts[1], 1000000 * 10 ** 18);
-    await token.approve(accounts[0], 500000 * 10 ** 18, {from: accounts[1]});
-    await token.burnFrom(accounts[1], 500000 * 10 ** 18);
-
-    const balance = await token.balanceOf(accounts[1]).valueOf();
-    assert.equal(balance, 500000 * 10 ** 18);
-
-    const supply = await token.totalSupply().valueOf();
-    assert.equal(supply, 99500000 * 10 ** 18);
-
-    //should not allow to burn more
-    try {
-      await token.burnFrom(accounts[1], 1);
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
-  it("should not allow to burn from by not owner", async function() {
-    let token = await StarCoin.new();
-    await token.setTransferAgent(accounts[0], true);
-    await token.transfer(accounts[1], 1000000 * 10 ** 18);
-    await token.approve(accounts[2], 500000 * 10 ** 18, {from: accounts[1]});
-
-    try {
-      await token.burnFrom(accounts[1], 500000 * 10 ** 18, {from: accounts[2]});
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
-  });
-
-  it("should not allow to burn from more than balance", async function() {
-    let token = await StarCoin.new();
-    await token.setTransferAgent(accounts[0], true);
-    await token.transfer(accounts[1], 500000 * 10 ** 18);
-    await token.approve(accounts[0], 1000000 * 10 ** 18, {from: accounts[1]});
-
-    try {
-      await token.burnFrom(accounts[1], 500001 * 10 ** 18);
-    } catch (error) {
-      return assertJump(error);
-    }
-    assert.fail('should have thrown before');
   });
 });
